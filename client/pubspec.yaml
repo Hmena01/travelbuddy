@@ -10,25 +10,18 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_animate: ^4.5.2
-  http: ^1.1.0
-  image_picker: ^1.1.2
-  socket_io_client: ^3.0.2
-  logger: ^2.0.0
-  cupertino_icons: ^1.0.2
-  audioplayers: ^6.4.0
-  path_provider: ^2.1.5
-  just_audio: ^0.9.36
+  flutter_soloud: ^2.0.8
+  record: ^5.1.2
   web_socket_channel: ^3.0.2
-  web: ^1.0.0
-  js: ^0.7.1
+  path_provider: ^2.1.5
+  logging: ^1.2.0
+  cupertino_icons: ^1.0.2
   # Firebase dependencies
   firebase_core: ^3.8.1
   firebase_auth: ^5.3.3
   cloud_firestore: ^5.5.1
   firebase_storage: ^12.3.6
-  firebase_analytics: ^11.3.6
-  firebase_messaging: ^15.1.5
-  firebase_crashlytics: ^4.2.0
+  logger: ^2.0.0
 
 dev_dependencies:
   flutter_test:
