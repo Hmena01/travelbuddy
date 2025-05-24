@@ -32,8 +32,8 @@ flutter:
   uses-material-design: true
 
   # Uncomment and update the following if we have assets we wanna include
-  assets:
-    - web/pcm-processor.js
+  # assets:
+  #   - web/pcm-processor.js
 
 
   # Uncomment and update the following if you use custom fonts later on to make it look purrty 
