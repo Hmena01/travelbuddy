@@ -1,0 +1,52 @@
+name: google_flow
+description: "A new Flutter project for Google Flow integration."
+publish_to: 'none' # This prevents accidental publishing to pub.dev
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.6.1 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_animate: ^4.5.2
+  http: ^1.1.0
+  image_picker: ^1.1.2
+  socket_io_client: ^3.0.2
+  logger: ^2.0.0
+  cupertino_icons: ^1.0.2
+  audioplayers: ^6.4.0
+  path_provider: ^2.1.5
+  just_audio: ^0.9.36
+  web_socket_channel: ^3.0.2
+  web: ^1.0.0
+  js: ^0.7.1
+  # Firebase dependencies
+  firebase_core: ^3.8.1
+  firebase_auth: ^5.3.3
+  cloud_firestore: ^5.5.1
+  firebase_storage: ^12.3.6
+  firebase_analytics: ^11.3.6
+  firebase_messaging: ^15.1.5
+  firebase_crashlytics: ^4.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Uncomment and update the following if we have assets we wanna include
+  assets:
+    - web/pcm-processor.js
+
+
+  # Uncomment and update the following if you use custom fonts later on to make it look purrty 
+  # fonts:
+  #   - family: YourFontFamily
+  #     fonts:
+  #       - asset: fonts/YourFont-Regular.ttf
+  #       - asset: fonts/YourFont-Bold.ttf
+  #         weight: 700
