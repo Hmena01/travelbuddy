@@ -58,8 +58,9 @@ class FirebaseService {
       _logger.i('Created user with email: ${userCredential.user?.email}');
 
       // Create user document in Firestore
-      if (userCredential.user != null) {
-        await createUserDocument(userCredential.user!);
+      final user = userCredential.user;
+      if (user != null) {
+        await createUserDocument(user);
       }
 
       return userCredential.user;

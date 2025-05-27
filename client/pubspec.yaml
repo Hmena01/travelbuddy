@@ -10,12 +10,15 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_animate: ^4.5.2
-  flutter_soloud: ^2.0.8
+  flutter_soloud: ^3.1.10
   record: ^5.1.2
   web_socket_channel: ^3.0.2
   path_provider: ^2.1.5
   logging: ^1.2.0
   cupertino_icons: ^1.0.2
+  # Camera support
+  camera: ^0.11.1
+  camera_web: ^0.3.5
   # Firebase dependencies
   firebase_core: ^3.8.1
   firebase_auth: ^5.3.3
