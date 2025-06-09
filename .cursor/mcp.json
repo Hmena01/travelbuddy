@@ -1,0 +1,63 @@
+{
+  "mcpServers": {
+    "firebase": {
+      "command": "npx",
+      "args": ["-y", "firebase-tools@latest", "experimental:mcp"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/filesystem-mcp"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/github-mcp"]
+    },
+    "docker": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/docker-mcp"]
+    },
+    "sql": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/sql-mcp"]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/playwright-mcp"]
+    },
+    "notion": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/notion-mcp"]
+    },
+    "slack": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/slack-mcp"]
+    },
+    "flutter_agentic_app_manager": {
+      "command": "npx",
+      "args": ["-y", "agentic_app_manager-mcp"]
+    },
+    "stream_ai_voice_assistant": {
+      "command": "npx",
+      "args": ["-y", "stream-ai-voice-assistant-mcp"]
+    },
+    "mcp_flutter": {
+      "command": "npx",
+      "args": ["-y", "mcp_flutter"]
+    },
+    "puppeteer": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/puppeteer-mcp"]
+    },
+    "agentql": {
+      "command": "npx",
+      "args": ["-y", "agentql-mcp"],
+      "env": {
+        "AGENTQL_API_KEY": "fGfD9FGzkhh0AdpV-e8YJl23j2mD4K9MSaCzLdbBkcG1wyfjHdv52Q"
+      }
+    },
+    "crawl4ai": {
+      "command": "python",
+      "args": ["-m", "crawl4ai.server"]
+    }
+  }
+} 

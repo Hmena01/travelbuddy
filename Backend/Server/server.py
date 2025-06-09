@@ -3,18 +3,17 @@ import json
 import os
 import websockets
 from google import genai
+from google.genai import types
 import base64
 import io
 from pydub import AudioSegment
 import google.generativeai as generative
 import wave
 from dotenv import load_dotenv
-import firebase_admin
-from firebase_admin import credentials, firestore
-from datetime import datetime
+from datetime import datetime, UTC
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from Backend/.env
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 # Get API key from environment
 api_key = os.getenv('GOOGLE_API_KEY')
@@ -26,140 +25,63 @@ generative.configure(api_key=api_key)
 MODEL = "gemini-2.0-flash-exp"   # Latest stable Flash model for general use
 TRANSCRIPTION_MODEL = "gemini-1.5-flash-8b"  # Same model for transcription
 
-# Initialize Firebase
-try:
-    # Initialize Firebase Admin SDK
-    # Use service account key if available, otherwise use default credentials
-    service_account_key = os.getenv('FIREBASE_SERVICE_ACCOUNT_KEY')
-    if service_account_key:
-        # If service account key is provided as JSON string
-        import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            f.write(service_account_key)
-            cred = credentials.Certificate(f.name)
-    else:
-        # Use default credentials or service account file
-        service_account_file = os.getenv('FIREBASE_SERVICE_ACCOUNT_FILE', 'serviceAccountKey.json')
-        if os.path.exists(service_account_file):
-            cred = credentials.Certificate(service_account_file)
-        else:
-            # Use default credentials (useful for Cloud Run)
-            cred = credentials.ApplicationDefault()
-    
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-    print("Firebase initialized successfully")
-except Exception as e:
-    print(f"Firebase initialization failed: {e}")
-    db = None
-
 client = genai.Client(
   http_options={
     'api_version': 'v1alpha',
   }
 )
 
-async def save_translation_to_firebase(user_id: str, session_id: str, original_text: str, translated_text: str, source_lang: str, target_lang: str):
-    """Save translation history to Firebase"""
-    if db is None:
-        return
-    
-    try:
-        doc_ref = db.collection('translations').document()
-        doc_ref.set({
-            'user_id': user_id,
-            'session_id': session_id,
-            'original_text': original_text,
-            'translated_text': translated_text,
-            'source_language': source_lang,
-            'target_language': target_lang,
-            'timestamp': firestore.SERVER_TIMESTAMP,
-            'created_at': datetime.utcnow().isoformat()
-        })
-        print(f"Translation saved to Firebase: {session_id}")
-    except Exception as e:
-        print(f"Error saving translation to Firebase: {e}")
-
-async def save_session_to_firebase(user_id: str, session_id: str, session_data: dict):
-    """Save session data to Firebase"""
-    if db is None:
-        return
-    
-    try:
-        doc_ref = db.collection('sessions').document(session_id)
-        doc_ref.set({
-            'user_id': user_id,
-            'session_id': session_id,
-            'session_data': session_data,
-            'last_updated': firestore.SERVER_TIMESTAMP,
-            'created_at': datetime.utcnow().isoformat()
-        }, merge=True)
-        print(f"Session saved to Firebase: {session_id}")
-    except Exception as e:
-        print(f"Error saving session to Firebase: {e}")
-
-async def gemini_session_handler(client_websocket: websockets.WebSocketServerProtocol):
+async def gemini_session_handler(client_websocket):
     """Handles the interaction with Gemini API within a websocket session."""
     # Generate session ID for this connection
     session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{id(client_websocket)}"
-    user_id = "anonymous_user"  # Default user ID, can be updated based on auth
     
     try:
         config_message = await client_websocket.recv()
         config_data = json.loads(config_message)
         config = config_data.get("setup", {})
-        
-        # Extract user_id if provided
-        if "user_id" in config:
-            user_id = config["user_id"]
 
-        # Save session start to Firebase
-        await save_session_to_firebase(user_id, session_id, {
-            "status": "started",
-            "config": config
-        })
-
-        # Ensure we have system instructions for translation (REVISED PROMPT BLOCK)
-        if "system_instruction" not in config:
-            config["system_instruction"] = {
+        # Configure for audio generation with correct Gemini Live API format
+        config = {
+            "response_modalities": ["AUDIO"],  # Enable audio responses - at root level
+            "speech_config": {
+                "voice_config": {
+                    "prebuilt_voice_config": {
+                        "voice_name": "Aoede"  # High-quality voice
+                    }
+                }
+            },
+            "system_instruction": {
                 "parts": [{
-                    "text": """You are NativeFlow, a friendly and helpful multilingual language assistant, live translator, and tutor. Listen carefully to the user's request spoken in their language.
+                    "text": """You are NativeFlow, a professional live translator and language assistant. 
 
-1.  **Identify User's Goal:** Determine if the user wants to:
-    * Translate a phrase from their language *into* another language (e.g., "How do I say 'thank you' in Vietnamese?").
-    * Understand the meaning of a phrase spoken in a foreign language *in English* (e.g., User speaks Vietnamese: "Cảm ơn nghĩa là gì?").
-    * Get help with pronunciation (e.g., "Can you say that again slowly?").
+IMPORTANT: Always respond with AUDIO. Speak your responses clearly and naturally.
 
-2.  **Translation (User Language -> Target Language):**
-    * Identify the user's original language and the target language.
-    * Identify the phrase to translate.
-    * Respond naturally *in the user's original language* for conversational text.
-    * Provide the translation *text* accurately in the target language.
-    * **IMPORTANT AUDIO:** Generate the spoken translation audio **using a clear, native-sounding accent for the *target language*** (e.g., use a Vietnamese accent for Vietnamese audio, a Mandarin Chinese accent for Mandarin audio, etc.). Avoid using a generic or American English accent for non-English translations.
-    * Offer brief context or pronunciation guidance if helpful.
+**Your Translation Process:**
+1. **Listen & Analyze**: Carefully listen to what the user says
+2. **Identify Languages**: Determine the source language and intended target language  
+3. **Provide Translation**: Give the most natural and accurate translation in AUDIO
 
-3.  **Translation (Foreign Language -> English):**
-    * Identify the foreign language phrase spoken by the user.
-    * Recognize the request is for the English meaning.
-    * Respond *in English*, providing the clear English translation (text and audio). The audio for the *English* translation can use a standard English accent.
+**Response Format:**
+- Always respond with SPOKEN audio
+- Use authentic native pronunciation for each target language
+- Speak clearly and at natural pace
+- For pronunciation help, speak slower with emphasis on difficult sounds
 
-4.  **Pronunciation Assistance:**
-    * If the user asks you to repeat a translation slowly (e.g., "Say that again slowly," "Can you repeat that?", "Slow down"), repeat *only* the translated phrase from the previous turn.
-    * Speak the repeated phrase clearly and at a noticeably slower pace, enunciating carefully **using the same native-sounding accent of the target language** as the original translation. Avoid adding extra conversational text during the slow repetition.
+**For Translation Requests**: 
+- Acknowledge what they want to translate
+- Provide the translation clearly in speech
+- Use authentic native accent for that language
 
-Your primary goal is to be a seamless live translation and language learning assistant, responding accurately and helpfully with clear text and **appropriately accented, natural-sounding spoken audio** (including slowed-down audio for pronunciation)."""
+**For Understanding Foreign Phrases**:
+- Identify the language in speech
+- Provide the English meaning clearly in speech
+- Add cultural context if relevant
+
+You must ALWAYS respond with audio. Never just send text - speak your response."""
                 }]
             }
-        # Note: The config["generation_config"]["language"] = "en" line below this
-        # usually sets the *initial* language Gemini might expect or default to,
-        # but the system instruction above should override the rigid swapping behavior.
-
-        # Add language preference to the configuration
-        if "generation_config" not in config:
-            config["generation_config"]= {}
-
-        # Set English as the default language
-        config["generation_config"]["language"] = "en"
+        }
 
         async with client.aio.live.connect(model=MODEL, config=config) as session:
             print("Connected to Gemini API")
@@ -174,10 +96,34 @@ Your primary goal is to be a seamless live translation and language learning ass
                               for chunk in data["realtime_input"]["media_chunks"]:
                                   if chunk["mime_type"] == "audio/pcm":
                                       save_pcm_as_mp3(base64.b64decode(chunk["data"]),16000, filename="user_input_to_server.mp3")
-                                      await session.send({"mime_type": "audio/pcm", "data": chunk["data"]})
+                                      
+                                      # Skip transcription for now to avoid API errors - focus on translation
+                                      # user_audio_data = base64.b64decode(chunk["data"])
+                                      # if len(user_audio_data) >= 1500:
+                                      #     user_transcription = transcribe_audio(user_audio_data, sample_rate=16000)
+                                      #     if user_transcription and user_transcription != "UNCLEAR_AUDIO":
+                                      #         await client_websocket.send(json.dumps({
+                                      #             "transcription": {
+                                      #                 "text": user_transcription,
+                                      #                 "source": "user_input",
+                                      #                 "timestamp": datetime.now().isoformat()
+                                      #             }
+                                      #         }))
+                                      #         print(f"User said: {user_transcription}")
+                                      
+                                      # Use the correct method for sending realtime audio input
+                                      # According to Live API docs, audio should be sent as binary data
+                                      audio_data = base64.b64decode(chunk["data"])
+                                      await session.send_realtime_input(
+                                          audio=types.Blob(data=audio_data, mime_type=chunk["mime_type"])
+                                      )
 
                                   elif chunk["mime_type"] == "image/jpeg":
-                                      await session.send({"mime_type": "image/jpeg", "data": chunk["data"]})
+                                      # Use the correct method for sending realtime image input
+                                      image_data = base64.b64decode(chunk["data"])
+                                      await session.send_realtime_input(
+                                          media_chunks=[types.Blob(data=image_data, mime_type=chunk["mime_type"])]
+                                      )
 
                       except Exception as e:
                           print(f"Error sending to Gemini: {e}")
@@ -237,33 +183,28 @@ Your primary goal is to be a seamless live translation and language learning ass
                                     await client_websocket.send(json.dumps({"turn_complete": True}))
                                     print("Sent turn_complete signal to client")
 
-                                    # Save translation to Firebase if we have text response
-                                    if current_text_response.strip():
-                                        await save_translation_to_firebase(
-                                            user_id=user_id,
-                                            session_id=session_id,
-                                            original_text="",  # We could capture user input text here
-                                            translated_text=current_text_response,
-                                            source_lang="auto-detect",
-                                            target_lang="auto-detect"
-                                        )
-
                                     # Reset for next turn
                                     audio_start_sent = False
                                     current_text_response = ""
 
                                     # Perform transcription after signaling turn_complete
                                     if accumulated_audio_this_turn:
-                                        print(f"Attempting transcription for {len(accumulated_audio_this_turn)} bytes...")
-                                        # Pass 24kHz sample rate to the transcription function
-                                        transcribed_text = transcribe_audio(accumulated_audio_this_turn, sample_rate=24000)
-                                        if transcribed_text:
-                                            # Send transcription text separately
-                                            await client_websocket.send(json.dumps({"text": f"[Transcription]: {transcribed_text}"}))
-                                            print(f"Sent transcription result: {transcribed_text}")
-                                        else:
-                                            print("Transcription failed or produced no text.")
-                                            await client_websocket.send(json.dumps({"text": "[Transcription]: <Not recognizable>"}))
+                                        print(f"Audio response completed: {len(accumulated_audio_this_turn)} bytes sent to client")
+                                        
+                                        # Skip transcription for now to avoid API errors - focus on audio response
+                                        # if len(accumulated_audio_this_turn) >= 2000:
+                                        #     transcribed_text = transcribe_audio(accumulated_audio_this_turn, sample_rate=24000)
+                                        #     if transcribed_text and transcribed_text != "UNCLEAR_AUDIO":
+                                        #         await client_websocket.send(json.dumps({
+                                        #             "transcription": {
+                                        #                 "text": transcribed_text,
+                                        #                 "source": "model_output",
+                                        #                 "timestamp": datetime.now().isoformat()
+                                        #             }
+                                        #         }))
+                                        #         print(f"Sent transcription result: {transcribed_text}")
+                                    else:
+                                        print("No audio accumulated for transcription")
                                     # Clear buffer for this turn
                                     accumulated_audio_this_turn = b''
                                     # Break the inner loop for this turn as it's complete
@@ -299,111 +240,178 @@ Your primary goal is to be a seamless live translation and language learning ass
     except Exception as e:
         print(f"Error in Gemini session: {e}")
     finally:
-        # Save session end to Firebase
-        await save_session_to_firebase(user_id, session_id, {
-            "status": "ended",
-            "ended_at": datetime.utcnow().isoformat()
-        })
         print("Gemini session closed.")
 
 def transcribe_audio(audio_data, sample_rate=24000):
-    """Transcribes audio using Gemini 1.5 Flash."""
+    """Transcribes audio using Gemini 1.5 Flash with improved error handling."""
     try:
         # Make sure we have valid audio data
-        if not audio_data:
-            print("No audio data received for transcription")
-            return None # Return None instead of string message
+        if not audio_data or len(audio_data) < 1000:  # Minimum audio size check
+            print(f"Audio data too small for transcription: {len(audio_data) if audio_data else 0} bytes")
+            return None
             
-        # Convert PCM to MP3
-        save_pcm_as_mp3(audio_data, sample_rate=sample_rate, filename="gemini_output_for_transcription.mp3")
-        mp3_audio_base64 = convert_pcm_to_mp3(audio_data, sample_rate=sample_rate)
-        if not mp3_audio_base64:
-            print("Failed to convert PCM to MP3")
+        # Convert PCM to MP3 with error handling
+        try:
+            save_pcm_as_mp3(audio_data, sample_rate=sample_rate, filename="gemini_output_for_transcription.mp3")
+            mp3_audio_base64 = convert_pcm_to_mp3(audio_data, sample_rate=sample_rate)
+            if not mp3_audio_base64:
+                print("Failed to convert PCM to MP3")
+                return None
+        except Exception as convert_error:
+            print(f"Audio conversion error: {convert_error}")
             return None
             
         # Create a client specific for transcription
         transcription_client = generative.GenerativeModel(model_name=TRANSCRIPTION_MODEL)
         
-        prompt = """Generate a transcript of the speech. 
-        Please do not include any other text in the response. 
-        If you cannot hear the speech, please only say '<Not recognizable>'."""
+        # Simplified prompt for better accuracy
+        prompt = """Transcribe this audio accurately. If the audio is unclear or contains only noise, respond with exactly: UNCLEAR_AUDIO"""
         
         try:
+            # Decode base64 audio for API call
+            audio_bytes = base64.b64decode(mp3_audio_base64)
+            
+            # Validate audio size before API call
+            if len(audio_bytes) < 500:  # Minimum file size for valid MP3
+                print(f"MP3 file too small: {len(audio_bytes)} bytes")
+                return "UNCLEAR_AUDIO"
+            
+            # Make API call with proper error handling
             response = transcription_client.generate_content(
                 [
                     prompt,
                     {
                         "mime_type": "audio/mp3", 
-                        "data": base64.b64decode(mp3_audio_base64),
+                        "data": audio_bytes,
                     }
-                ]
+                ],
+                # Optimized generation config for real-time processing
+                generation_config=generative.GenerationConfig(
+                    max_output_tokens=50,  # Reduced for faster processing
+                    temperature=0.0,  # Deterministic for speed
+                    candidate_count=1,  # Single candidate for speed
+                )
             )
             
-            print(f"Transcription API response text: {response.text}")
-            
-            # Check if the response is meaningful before returning
-            if response.text and response.text.strip() and response.text != '<Not recognizable>':
-                return response.text
-            else:
-                return None
+            if not response or not response.text:
+                print("No response from transcription API")
+                return "UNCLEAR_AUDIO"
                 
-        except Exception as e:
-            print(f"Error during transcription API call: {e}")
+            transcribed_text = response.text.strip()
+            print(f"Transcription successful: {transcribed_text}")
+            
+            # Check if the response is meaningful
+            if (transcribed_text == 'UNCLEAR_AUDIO' or 
+                len(transcribed_text) < 2 or
+                transcribed_text.lower() in ['', 'null', 'none', 'unclear']):
+                return "UNCLEAR_AUDIO"
+                
+            return transcribed_text
+                
+        except Exception as api_error:
+            print(f"Error during transcription API call: {api_error}")
+            # Don't return unclear audio on API errors, return None to distinguish
             return None
 
     except Exception as e:
-        print(f"Transcription error: {e}")
+        print(f"General transcription error: {e}")
         return None
 
 def save_pcm_as_mp3(pcm_data, sample_rate, filename="output.mp3"):
-    """Saves PCM audio data as an MP3 file locally."""
+    """Saves PCM audio data as an MP3 file locally with improved error handling."""
     try:
+        # Validate input data
+        if not pcm_data or len(pcm_data) < 1000:
+            print(f"PCM data too small to save: {len(pcm_data) if pcm_data else 0} bytes")
+            return None
+            
         # Convert PCM to WAV format in memory
         wav_buffer = io.BytesIO()
-        with wave.open(wav_buffer, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # Mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(sample_rate)  # Set sample rate to match recording
-            wav_file.writeframes(pcm_data)
+        try:
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(sample_rate)  # Set sample rate to match recording
+                wav_file.writeframes(pcm_data)
+        except Exception as wav_error:
+            print(f"Error creating WAV data: {wav_error}")
+            return None
         
         # Reset buffer position
         wav_buffer.seek(0)
 
-        # Convert WAV to MP3
-        audio_segment = AudioSegment.from_wav(wav_buffer)
-        audio_segment.export(filename, format="mp3", codec="libmp3lame")
-        
-        print(f"MP3 file saved successfully as {filename}")
-        return filename  # Return the filename for reference
+        try:
+            # Convert WAV to MP3
+            audio_segment = AudioSegment.from_wav(wav_buffer)
+            
+            # Validate audio segment
+            if len(audio_segment) < 100:  # Less than 0.1 seconds
+                print(f"Audio segment too short: {len(audio_segment)}ms")
+                return None
+                
+            audio_segment.export(filename, format="mp3", codec="libmp3lame")
+            print(f"MP3 file saved successfully as {filename}")
+            return filename  # Return the filename for reference
+        except Exception as mp3_error:
+            print(f"Error converting to MP3: {mp3_error}")
+            return None
+            
     except Exception as e:
         print(f"Error saving PCM as MP3: {e}")
         return None
 
 
 def convert_pcm_to_mp3(pcm_data, sample_rate=24000):
-    """Converts PCM audio to base64 encoded MP3."""
+    """Converts PCM audio to base64 encoded MP3 with improved error handling."""
     try:
+        # Validate input
+        if not pcm_data or len(pcm_data) < 1000:
+            print(f"PCM data too small for conversion: {len(pcm_data) if pcm_data else 0} bytes")
+            return None
+            
         # Create a WAV in memory first
         wav_buffer = io.BytesIO()
-        with wave.open(wav_buffer, 'wb') as wav_file:
-            wav_file.setnchannels(1)  # mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(sample_rate)  # Use the provided sample rate
-            wav_file.writeframes(pcm_data)
+        try:
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(1)  # mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(sample_rate)  # Use the provided sample rate
+                wav_file.writeframes(pcm_data)
+        except Exception as wav_error:
+            print(f"Error creating WAV in memory: {wav_error}")
+            return None
         
         # Reset buffer position
         wav_buffer.seek(0)
         
-        # Convert WAV to MP3
-        audio_segment = AudioSegment.from_wav(wav_buffer)
-        
-        # Export as MP3
-        mp3_buffer = io.BytesIO()
-        audio_segment.export(mp3_buffer, format="mp3", codec="libmp3lame")
-        
-        # Convert to base64
-        mp3_base64 = base64.b64encode(mp3_buffer.getvalue()).decode('utf-8')
-        return mp3_base64
+        try:
+            # Convert WAV to MP3
+            audio_segment = AudioSegment.from_wav(wav_buffer)
+            
+            # Validate audio segment
+            if len(audio_segment) < 100:  # Less than 0.1 seconds
+                print(f"Audio segment too short for conversion: {len(audio_segment)}ms")
+                return None
+            
+            # Export as MP3
+            mp3_buffer = io.BytesIO()
+            audio_segment.export(mp3_buffer, format="mp3", codec="libmp3lame")
+            
+            # Get MP3 data
+            mp3_data = mp3_buffer.getvalue()
+            
+            # Validate MP3 data
+            if len(mp3_data) < 500:  # Minimum reasonable MP3 size
+                print(f"MP3 data too small: {len(mp3_data)} bytes")
+                return None
+            
+            # Convert to base64
+            mp3_base64 = base64.b64encode(mp3_data).decode('utf-8')
+            print(f"Successfully converted PCM to MP3: {len(mp3_data)} bytes -> {len(mp3_base64)} base64 chars")
+            return mp3_base64
+        except Exception as conversion_error:
+            print(f"Error during MP3 conversion: {conversion_error}")
+            return None
         
     except Exception as e:
         print(f"Error converting PCM to MP3: {e}")
