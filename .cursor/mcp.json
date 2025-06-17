@@ -55,6 +55,10 @@
         "AGENTQL_API_KEY": "fGfD9FGzkhh0AdpV-e8YJl23j2mD4K9MSaCzLdbBkcG1wyfjHdv52Q"
       }
     },
+    "figma": {
+      "command": "npx",
+      "args": ["-y", "figma-developer-mcp", "--figma-api-key=YOUR-KEY", "--stdio"]
+    },
     "crawl4ai": {
       "command": "python",
       "args": ["-m", "crawl4ai.server"]
