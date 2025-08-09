@@ -1,7 +1,24 @@
----
-description: App development and fixing problems
-globs: 
-alwaysApply: false
----
-If I am developing an App tell me what the manual things I might need to do but also make sure you are using your tools like mcp servers and web to understand what the potential problem is and solution creation. Understand what the potential outcome needs to look like. 
+# Project: Context-Aware Translator MVP
+# Scope: keep edits surgical, generate diffs, preserve existing NativeFlow modules.
 
+[CODE STYLE]
+- Keep functions <150 lines; extract helpers.
+- Strong typing; no TODOs without tickets.
+- Log latency markers: first_partial_ms, final_transcript_ms, tts_first_byte_ms.
+
+[SEC/PRIVACY]
+- Never store raw audio or images by default.
+- Gate any telemetry behind a single config flag ANALYTICS_ENABLED.
+
+[ARCH PRINCIPLES]
+- Provider adapters: ASRAdapter, MTAdapter, TTSAdapter (cloud/local swap).
+- Feature flags: OFFLINE_MODE, USE_LOCAL_ASR, USE_LOCAL_TTS.
+- ContextEngine v1: GPS+localTime→tone formality (business|travel).
+
+[TESTING]
+- Unit tests for adapters; golden tests for OCR overlay mapping.
+- Add instrumentation timer around STT->MT->TTS pipeline.
+
+[ACCEPTANCE]
+- Median first-partial < 1s; p95 < 1.5s.
+- OCR overlay ≥90% correct bounding region on clear printed signage.
