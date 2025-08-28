@@ -6,7 +6,15 @@ from google import genai
 from google.genai import types
 import base64
 import io
-from pydub import AudioSegment
+import subprocess
+import tempfile
+try:
+    from pydub import AudioSegment  # Requires pyaudioop/audioop (not available on Py3.13 by default)
+    _HAVE_PYDUB = True
+except Exception as _e:
+    print(f"pydub not available, will use ffmpeg fallback for audio conversion: {_e}")
+    AudioSegment = None  # type: ignore
+    _HAVE_PYDUB = False
 import google.generativeai as generative
 import wave
 from dotenv import load_dotenv
@@ -411,101 +419,122 @@ def transcribe_audio(audio_data, sample_rate=24000):
         return None
 
 def save_pcm_as_mp3(pcm_data, sample_rate, filename="output.mp3"):
-    """Saves PCM audio data as an MP3 file locally with improved error handling."""
+    """Saves PCM audio data as an MP3 file locally. Uses pydub when available, else ffmpeg CLI."""
     try:
         # Validate input data
         if not pcm_data or len(pcm_data) < 1000:
             print(f"PCM data too small to save: {len(pcm_data) if pcm_data else 0} bytes")
             return None
-            
-        # Convert PCM to WAV format in memory
-        wav_buffer = io.BytesIO()
-        try:
-            with wave.open(wav_buffer, 'wb') as wav_file:
-                wav_file.setnchannels(1)  # Mono
-                wav_file.setsampwidth(2)  # 16-bit
-                wav_file.setframerate(sample_rate)  # Set sample rate to match recording
-                wav_file.writeframes(pcm_data)
-        except Exception as wav_error:
-            print(f"Error creating WAV data: {wav_error}")
-            return None
-        
-        # Reset buffer position
-        wav_buffer.seek(0)
 
-        try:
-            # Convert WAV to MP3
+        if _HAVE_PYDUB:
+            # Convert PCM->WAV (in-memory) then export MP3 via pydub
+            wav_buffer = io.BytesIO()
+            with wave.open(wav_buffer, 'wb') as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(sample_rate)
+                wav_file.writeframes(pcm_data)
+            wav_buffer.seek(0)
+
             audio_segment = AudioSegment.from_wav(wav_buffer)
-            
-            # Validate audio segment
-            if len(audio_segment) < 100:  # Less than 0.1 seconds
+            if len(audio_segment) < 100:
                 print(f"Audio segment too short: {len(audio_segment)}ms")
                 return None
-                
             audio_segment.export(filename, format="mp3", codec="libmp3lame")
             print(f"MP3 file saved successfully as {filename}")
-            return filename  # Return the filename for reference
-        except Exception as mp3_error:
-            print(f"Error converting to MP3: {mp3_error}")
-            return None
-            
+            return filename
+
+        # Fallback: write WAV to temp file and use ffmpeg to convert to MP3
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as wav_tmp:
+            with wave.open(wav_tmp, 'wb') as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(sample_rate)
+                wav_file.writeframes(pcm_data)
+            wav_path = wav_tmp.name
+
+        mp3_path = filename
+        cmd = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', wav_path, '-codec:a', 'libmp3lame', mp3_path]
+        try:
+            res = subprocess.run(cmd, capture_output=True)
+            if res.returncode != 0:
+                print(f"ffmpeg conversion failed: {res.stderr.decode(errors='ignore')}")
+                return None
+            print(f"MP3 file saved successfully as {mp3_path} (ffmpeg)")
+            return mp3_path
+        finally:
+            try:
+                os.remove(wav_path)
+            except Exception:
+                pass
     except Exception as e:
         print(f"Error saving PCM as MP3: {e}")
         return None
 
 
 def convert_pcm_to_mp3(pcm_data, sample_rate=24000):
-    """Converts PCM audio to base64 encoded MP3 with improved error handling."""
+    """Converts PCM audio to base64 MP3. Uses pydub when available, else ffmpeg CLI."""
     try:
         # Validate input
         if not pcm_data or len(pcm_data) < 1000:
             print(f"PCM data too small for conversion: {len(pcm_data) if pcm_data else 0} bytes")
             return None
-            
-        # Create a WAV in memory first
-        wav_buffer = io.BytesIO()
-        try:
+
+        if _HAVE_PYDUB:
+            wav_buffer = io.BytesIO()
             with wave.open(wav_buffer, 'wb') as wav_file:
-                wav_file.setnchannels(1)  # mono
-                wav_file.setsampwidth(2)  # 16-bit
-                wav_file.setframerate(sample_rate)  # Use the provided sample rate
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(sample_rate)
                 wav_file.writeframes(pcm_data)
-        except Exception as wav_error:
-            print(f"Error creating WAV in memory: {wav_error}")
-            return None
-        
-        # Reset buffer position
-        wav_buffer.seek(0)
-        
-        try:
-            # Convert WAV to MP3
+            wav_buffer.seek(0)
+
             audio_segment = AudioSegment.from_wav(wav_buffer)
-            
-            # Validate audio segment
-            if len(audio_segment) < 100:  # Less than 0.1 seconds
+            if len(audio_segment) < 100:
                 print(f"Audio segment too short for conversion: {len(audio_segment)}ms")
                 return None
-            
-            # Export as MP3
             mp3_buffer = io.BytesIO()
             audio_segment.export(mp3_buffer, format="mp3", codec="libmp3lame")
-            
-            # Get MP3 data
             mp3_data = mp3_buffer.getvalue()
-            
-            # Validate MP3 data
-            if len(mp3_data) < 500:  # Minimum reasonable MP3 size
+            if len(mp3_data) < 500:
                 print(f"MP3 data too small: {len(mp3_data)} bytes")
                 return None
-            
-            # Convert to base64
             mp3_base64 = base64.b64encode(mp3_data).decode('utf-8')
-            print(f"Successfully converted PCM to MP3: {len(mp3_data)} bytes -> {len(mp3_base64)} base64 chars")
+            print(f"Successfully converted PCM to MP3 via pydub: {len(mp3_data)} bytes -> {len(mp3_base64)} base64 chars")
             return mp3_base64
-        except Exception as conversion_error:
-            print(f"Error during MP3 conversion: {conversion_error}")
-            return None
-        
+
+        # Fallback path: write temp WAV, run ffmpeg to MP3, read back
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as wav_tmp:
+            with wave.open(wav_tmp, 'wb') as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(sample_rate)
+                wav_file.writeframes(pcm_data)
+            wav_path = wav_tmp.name
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as mp3_tmp:
+            mp3_path = mp3_tmp.name
+
+        cmd = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'error', '-i', wav_path, '-codec:a', 'libmp3lame', mp3_path]
+        try:
+            res = subprocess.run(cmd, capture_output=True)
+            if res.returncode != 0:
+                print(f"ffmpeg conversion failed: {res.stderr.decode(errors='ignore')}")
+                return None
+            with open(mp3_path, 'rb') as f:
+                mp3_data = f.read()
+            if len(mp3_data) < 500:
+                print(f"MP3 data too small after ffmpeg: {len(mp3_data)} bytes")
+                return None
+            mp3_base64 = base64.b64encode(mp3_data).decode('utf-8')
+            print(f"Successfully converted PCM to MP3 via ffmpeg: {len(mp3_data)} bytes -> {len(mp3_base64)} base64 chars")
+            return mp3_base64
+        finally:
+            for p in [wav_path, mp3_path]:
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
     except Exception as e:
         print(f"Error converting PCM to MP3: {e}")
         return None

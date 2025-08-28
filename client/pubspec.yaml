@@ -16,6 +16,7 @@ dependencies:
   # Audio & Media
   flutter_soloud: ^3.1.10
   record: ^5.1.2
+  flutter_tts: ^3.8.3
   
   # Networking & Real-time
   web_socket_channel: ^3.0.2

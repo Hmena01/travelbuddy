@@ -15,10 +15,10 @@ import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:record/record.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 
 // Import the professional theme and modern components
 import 'core/theme/app_theme.dart';
-import 'widgets/modern_voice_button.dart';
 import 'core/services/agentic_ai_service.dart';
 import 'core/services/performance_service.dart';
 import 'core/services/simple_backend_service.dart';
@@ -81,6 +81,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   // Audio state
   AudioSource? currentSound;
   SoundHandle? _currentSoundHandle;
+  // TTS fallback state
+  FlutterTts? _tts;
+  bool _ttsReady = false;
 
   // Animation controllers
   late AnimationController _logoAnimationController;
@@ -177,8 +180,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       // Initialize agentic AI service
       await _agenticService.initialize();
 
-      // Initialize SoLoud for both web and native platforms
-      await _initializeSoLoud();
+      // Initialize SoLoud
+      // Web: defer init until user gesture (mic tap) to satisfy Chrome autoplay policy
+      if (!kIsWeb) {
+        await _initializeSoLoud();
+      } else {
+        log('CLIENT INIT: Deferring SoLoud initialization until user taps microphone (web autoplay policy)');
+      }
+
+      // Initialize TTS fallback (works well on web/Chrome)
+      await _initTts();
 
       // Initialize WebSocket connection
       await _initConnection();
@@ -197,6 +208,66 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       }
     } finally {
       _isInitializing = false;
+    }
+  }
+
+  Future<void> _initTts() async {
+    try {
+      _tts = FlutterTts();
+      // Web/iOS need this to complete before speaking
+      await _tts!.awaitSpeakCompletion(true);
+      // Sensible defaults for clarity
+      await _tts!.setLanguage('en-US');
+      await _tts!.setSpeechRate(0.45);
+      await _tts!.setVolume(1.0);
+      await _tts!.setPitch(1.0);
+      _ttsReady = true;
+      log('TTS initialized successfully');
+    } catch (e) {
+      _ttsReady = false;
+      log('TTS initialization failed: $e');
+    }
+  }
+
+  Future<void> _speakWithTts(String text) async {
+    // Use only when no server audio is present or audio engine unavailable
+    if (_disposed || !_ttsReady || _tts == null) {
+      log('TTS not ready or disposed; skipping speech');
+      return;
+    }
+
+    try {
+      setState(() {
+        isAiSpeaking = true;
+      });
+
+      // Stop any current utterance
+      try {
+        await _tts!.stop();
+      } catch (_) {}
+
+      await _tts!.speak(text);
+
+      // Safety timeout
+      _speakingTimeoutTimer?.cancel();
+      _speakingTimeoutTimer = Timer(const Duration(seconds: 15), () {
+        if (mounted) {
+          setState(() => isAiSpeaking = false);
+        }
+      });
+
+      // When completion is awaited, we can unset flag after speak returns
+      if (mounted) {
+        setState(() {
+          isAiSpeaking = false;
+        });
+      }
+
+      // Continuous conversation: Auto-restart listening
+      _handleAudioCompletionForContinuousConversation();
+    } catch (e) {
+      log('TTS speak failed: $e');
+      if (mounted) setState(() => isAiSpeaking = false);
     }
   }
 
@@ -2094,6 +2165,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         serverResponse = response['text'];
       });
 
+      // Speak via TTS fallback if no server audio is available
+      if (!_isAudioAvailable || !_audioInitSucceeded) {
+        await _speakWithTts(response['text'] ?? '');
+      }
+
       log('Fallback processing completed');
     } catch (e) {
       log('Error in fallback processing: $e');
@@ -2208,6 +2284,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         setState(() {
           serverResponse = content;
         });
+        // If no audio was provided, speak via TTS fallback (especially on web)
+        if (!_isAudioAvailable || !_audioInitSucceeded) {
+          await _speakWithTts(content);
+        }
       }
     } else if (message.containsKey('audio_start')) {
       // Audio playback starting signal
